@@ -59,7 +59,7 @@ def _fit_gaussian(histogram, A=0, μ=0, σ=0, visuals=False):
     raise
 
 
-def rebin(histogram, bin_size=1, visuals=False):
+def _rebin(histogram, bin_size=1, visuals=False):
   # split histogram into values and bins
   values = list(histogram.values())
   bins = list(histogram)
@@ -184,11 +184,11 @@ def get_peaks_and_distances(
       distances[_s] += answer['distances']
       peaks[_s] += answer['peaks']
       received += 1
-    print('  SiPM %03d - Sent / Received / Errors: %d / %d / %d' % (sipm, sent, received, errors))
+    
+    print('  SiPM %02d - Sent / Received / Errors: %d / %d / %d' % (sipm, sent, received, errors))
 
   # TODO: close the context or use the decorator given by pyzmq
-
-
+  
   return peaks, distances
 
 
@@ -201,7 +201,7 @@ def get_gains(distances, sipms=range(32)):
 
   # Compute the gains
   for sipm in sipms:
-    print('  SiPM %d' % sipm)
+    errors = 0
 
     # A histogram with 5 peaks corresponds to 10 distances
     # (4 singles, 3 doubles, 2 tripples and 1 quadruple)
@@ -210,7 +210,7 @@ def get_gains(distances, sipms=range(32)):
     # distances are collected.
     if sipm in distances:
       if len(distances[sipm]) < 100:
-        print('    Less than 100 distances!!')
+        errors += 1
 
       # Build a histogram using the distances
       ydata, edges = np.histogram(
@@ -236,6 +236,8 @@ def get_gains(distances, sipms=range(32)):
           gains[sipm] = (A, mu, sigma), pcov
 
       except RuntimeError as e:
-        print('    ', e)
+        errors += 1
+
+    print('  SiPM %d: %d errors' % (sipm, errors))
 
   return gains
