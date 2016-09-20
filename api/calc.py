@@ -1,36 +1,16 @@
 from plotly.offline import iplot
+from random         import sample
 from scipy.optimize import curve_fit
 
 import plotly.graph_objs as go
 import numpy             as np
 import glob
+import json
 import pickle
 import sys
-
-
-## TODO: write code documentation!
-
+import zmq
 
 ## internal functions
-
-def _clean_results(params, uncerts):
-
-  # The first result must be right
-  yield(params[0], uncerts[0])
-
-  # store it's width
-  σ0 = params[0][2]
-
-  for i in range(1, len(params)):
-    _, μ, σ = params[i]
-    _, σμ, σσ = uncerts[i]
-
-    if (σ + np.sqrt(σσ)) > σ0 and σμ/μ < 0.1:
-      yield(params[i], uncerts[i])
-      σ0 = σ
-    else:
-      break
-
 
 def _gauss(x, A, μ, σ):
   return A * np.exp(- (x-μ)**2 / (2.0 * σ**2))
@@ -166,7 +146,6 @@ def fit_gaussian(histogram, A=0, μ=0, σ=0, visuals=False):
 
 
 def rebin(histogram, bin_size=1, visuals=False):
-
   # split histogram into values and bins
   values = list(histogram.values())
   bins = list(histogram)
@@ -201,61 +180,156 @@ def rebin(histogram, bin_size=1, visuals=False):
   return rebinned
 
 
-def split(histogram, threshold=3, visuals=False):
+def get_peaks_and_distances(
+  histograms,
+  sipms=range(32),
+  output_socket='tcp://localhost:7000',
+  input_socket='tcp://localhost:8000'
+):
+  """Returns the found peak positions and
+  computed distances for the given list
+  of SiPMs using the peak finder / fitter"""
 
-  # split histogram into values and bins
-  values = list(histogram.values())
-  bins = list(histogram)
+  # connects to the peak finder and fitter
+  context = zmq.Context()
 
-  # Try to determine the noise
-  noise = dict(zip(bins, values))
+  pusher = context.socket(zmq.PUSH)
+  pusher.connect(output_socket)
 
-  iterate = True
-  size = len(noise)
-  mean = np.mean(values)
-  std = np.std(values)
+  puller = context.socket(zmq.PULL)
+  puller.connect(input_socket)
 
-  while iterate:
-    noise = dict([(b, noise[b]) for b in noise if noise[b] < mean + threshold*std])
+  # stores the results of the peak finder and fitter
+  distances = {}
+  peaks     = {}
 
-    # If no more bins were removed, stop iterating
-    # else calculate the new mean and standard deviation of the new histogram
-    if len(noise) == size:
-      iterate = False
+  # compute the gain for every channel
+  for sipm in sipms:
 
-    else:
-      size = len(noise)
-      mean = np.mean(list(noise.values()))
-      std  = np.std(list(noise.values()))
+    print('  SiPM %d' % sipm)
 
-  # Separate the foreground from the noise
-  signal = dict([(b, v) for b, v in zip(bins, values) if b not in noise])
+    sent = 0
+    received = 0
 
-  x_min = min(signal)
-  x_max = max(signal)
+    # get the spectra of a SiPM of the crt
+    spectra = [ss[sipm] for config, pp, ss in histograms]
 
-  background = dict([(b, v) for b, v in zip(bins, values) if b < x_min or x_max < b])
-  foreground = dict([(b, v) for b, v in zip(bins, values) if x_min <= b <= x_max])
+    # the data is collected in sets of 5000 events
+    # since most of the peaks do not show at that
+    # number of events, several histograms need to
+    # be combined into one histogram.
+    # let's take 15 aggregated histograms of 50k events
+    # and cut out the relevant part of it
+    aggregated = [[sum(_) for _ in zip(*sample(spectra, 10))][300:1000]
+      for i in range(15)
+    ]
 
-  if visuals:
-    layout = go.Layout(
-      title='Selected region for polynomial fit',
-      xaxis={'title':'Bin Nr'},
-      yaxis={'title':'Nr Events'}
-    )
+    # generate a key to recognize the results
+    # (improve this if several subprocesses need to communicate with the fitter,
+    # at the same time in order to know which task belongs to which subprocess.
+    # use a subscribtion socket using the key as filter instead of a puller)
+    key = json.dumps({'sipm': sipm})
 
-    iplot(go.Figure(
-      data=[go.Bar(
-        x=list(foreground),
-        y=list(foreground.values()),
-        name='peak search region'
-      ), go.Bar(
-        x=list(background),
-        y=list(background.values()),
-        name='ignored region'
-      )],
-      layout=layout
-    ))
+    # send the tasks to the fitter
+    for spectrum in aggregated:
 
-  return foreground, background
+      # the fitter needs a histogram { binnr:value, ... }
+      hist = dict(zip(range(len(spectrum)), spectrum))
+      message = json.dumps({
+        'key':      key,
+        'spectrum': hist
+      })
+      pusher.send_string(message)
+      sent += 1
+
+    # get the distances between the peaks
+    # from the fitter's result / response
+    for i in range(sent):
+
+      answer = puller.recv_string()
+
+      # TODO: this can be improved:
+      # the error should be given
+      # by an error key in the response
+      if answer == 'ERR':
+        print('    Fitter failed: ', answer)
+        continue
+
+      # the response of the fitter is a json
+      # structure containing the key,
+      # peak positions and computed distances
+      answer = json.loads(str(answer))
+
+      key = json.loads(answer['key'])
+      _s = key['sipm']
+
+      if 'distances' not in answer:
+        print('    Distances not in answer: ', answer)
+        continue
+
+      if _s not in distances:
+        distances[_s] = []
+
+      if _s not in peaks:
+        peaks[_s] = []
+
+      distances[_s] += answer['distances']
+      peaks[_s] += answer['peaks']
+      received += 1
+
+    print("    Sent / Received: %d/%d" % (sent, received))
+
+  # TODO: close the context or use the decorator given by pyzmq
+
+
+  return peaks, distances
+
+
+def get_gains(distances, sipms=range(32)):
+  """Returns the gains computed using the
+  list of computed distances between peaks"""
+
+  # Stores the gains
+  gains = {}
+
+  # Compute the gains
+  for sipm in sipms:
+    print('  SiPM %d' % sipm)
+
+    # A histogram with 5 peaks corresponds to 10 distances
+    # (4 singles, 3 doubles, 2 tripples and 1 quadruple)
+    # if 15 histograms are sent, 150 distances are computed
+    # at least. Something goes totally wrong if less than 100
+    # distances are collected.
+    if sipm in distances:
+      if len(distances[sipm]) < 100:
+        print('    Less than 100 distances!!')
+
+      # Build a histogram using the distances
+      ydata, edges = np.histogram(
+          [d for d, _ in distances[sipm]],
+          bins=50,
+          range=[20, 120]
+      )
+      xdata = (edges[:-1] + edges[1:]) / 2
+
+      pos = ydata.argmax()
+
+      res = []
+      try:
+        (A, mu, sigma), pcov = fit_gaussian(
+          dict(zip(xdata, ydata)),
+          max(ydata),
+          xdata[pos],
+          8 # TODO: don't like this hard coded stuff
+        )
+
+        # store the gain if its uncertainty is less than 10%
+        if (np.sqrt(pcov[1][1]) / mu)**2 < .1**2:
+          gains[sipm] = (A, mu, sigma), pcov
+
+      except RuntimeError as e:
+        print('    ', e)
+
+  return gains
 

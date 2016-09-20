@@ -111,6 +111,8 @@ def connected_febs(socket="tcp://localhost:5557"):
         if feb not in _configs:
             _configs[feb] = None
 
+    # TODO: close the context
+
     return febs
 
 
@@ -231,7 +233,7 @@ def start_histos(
 
     # Standard input arguments
     input_args = [
-        './histos',
+        './histos/histos',
         '--events', str(events),
         '--driver', driver,
         '--input',  input_socket,
@@ -270,3 +272,62 @@ def task_to_data(data):
   # return the unpacked data
   return mac5, config, pedestals, spectra
 
+
+def acquire(
+  crts,
+  path='data',
+  nr_histograms=12,
+  events=5000,
+  driver='tcp://localhost:5555',
+  data='tcp://localhost:5556',
+  port=6000
+):
+  """Collects and stores a number of histograms with a given
+  number of events for the given list of CRT modules"""
+
+  context = zmq.Context()
+  puller  = context.socket(zmq.PULL)
+  puller.bind('tcp://*:%d' % port)
+
+  # force crts to be a list
+  if type(crts) == int:
+    crts = [crts]
+
+  # Start the histogram builders
+  histos = start_histos(
+    febs=crts,
+    events=events,
+    driver=driver,
+    input_socket=data,
+    output_socket='tcp://localhost:%d' % port,
+    continuous=True
+  )
+  print("  Started observations ", str(datetime.now()))
+
+  # Collect a certain number of histograms in total
+  counters = [0]*len(crts)
+  while min(counters) < nr_histograms:
+    task = puller.recv()
+    crt, config, pedestals, spectra = task_to_data(task)
+
+    # Count up the task
+    counters[crts.index(crt)] += 1
+
+    now = str(datetime.now())
+    print(now, ' - got histograms from CRT module %d' % crt)
+
+    f = open('%s/%02x-%s.task' % (path, crt, now), "wb")
+    pickle.dump(task, f)
+    f.close()
+
+    f = open('%s/%02x-%s.histos' % (path, crt, now), "wb")
+    pickle.dump((crt, config, pedestals, spectra), f)
+    f.close()
+
+  # Stop the running histos instances
+  for h in histos:
+    h.terminate()
+
+  print('Finished round at %s' % str(datetime.now()))
+
+  # TODO: close the context or use the python decorator
