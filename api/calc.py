@@ -59,6 +59,21 @@ def _fit_gaussian(histogram, A=0, μ=0, σ=0, visuals=False):
     raise
 
 
+def rebin(histogram, bin_size=1, visuals=False):
+  # split histogram into values and bins
+  values = list(histogram.values())
+  bins = list(histogram)
+
+  # Rebin data
+  xdata = [np.mean(bins[nr:nr+bin_size]) for nr in range(0, len(bins), bin_size)]
+  ydata = [sum(values[nr:nr+bin_size]) for nr in range(0, len(values), bin_size)]
+
+  # generate histogram
+  rebinned = dict(zip(xdata, ydata))
+
+  return rebinned
+
+
 ## api functions
 
 def get_histograms(template='*.histos'):
@@ -72,41 +87,6 @@ def get_histograms(template='*.histos'):
       histograms[mac5] = []
     histograms[mac5].append((config, pp, ss))
   return histograms
-
-
-def rebin(histogram, bin_size=1, visuals=False):
-  # split histogram into values and bins
-  values = list(histogram.values())
-  bins = list(histogram)
-
-  # Rebin data
-  xdata = [np.mean(bins[nr:nr+bin_size]) for nr in range(0, len(bins), bin_size)]
-  ydata = [sum(values[nr:nr+bin_size]) for nr in range(0, len(values), bin_size)]
-
-  # generate histogram
-  rebinned = dict(zip(xdata, ydata))
-
-  if visuals:
-    layout = go.Layout(
-      title='Bining data',
-      xaxis={'title':'ADC Counts / Bin Nr'},
-      yaxis={'title':'Nr Events'}
-    )
-
-    iplot(go.Figure(
-      data=[go.Bar(
-        x=bins,
-        y=values,
-        name='data'
-      ), go.Bar(
-        x=xdata,
-        y=ydata,
-        name='bin size %d' % bin_size
-      )],
-      layout=layout
-    ))
-
-  return rebinned
 
 
 def get_peaks_and_distances(
@@ -134,9 +114,7 @@ def get_peaks_and_distances(
 
   # compute the gain for every channel
   for sipm in sipms:
-
-    print('  SiPM %d' % sipm)
-
+    
     sent = 0
     received = 0
 
@@ -173,6 +151,7 @@ def get_peaks_and_distances(
 
     # get the distances between the peaks
     # from the fitter's result / response
+    errors = 0
     for i in range(sent):
 
       answer = puller.recv_string()
@@ -181,7 +160,7 @@ def get_peaks_and_distances(
       # the error should be given
       # by an error key in the response
       if answer == 'ERR':
-        print('    Fitter failed: ', answer)
+        errors += 1
         continue
 
       # the response of the fitter is a json
@@ -193,7 +172,7 @@ def get_peaks_and_distances(
       _s = key['sipm']
 
       if 'distances' not in answer:
-        print('    Distances not in answer: ', answer)
+        errors += 1
         continue
 
       if _s not in distances:
@@ -205,8 +184,7 @@ def get_peaks_and_distances(
       distances[_s] += answer['distances']
       peaks[_s] += answer['peaks']
       received += 1
-
-    print("    Sent / Received: %d/%d" % (sent, received))
+    print('  SiPM %03d - Sent / Received / Errors: %d / %d / %d' % (sipm, sent, received, errors))
 
   # TODO: close the context or use the decorator given by pyzmq
 
