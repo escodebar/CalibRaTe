@@ -198,10 +198,10 @@ def get_gains(distances, sipms=range(32)):
 
   # Stores the gains
   gains = {}
+  errors = 0
 
   # Compute the gains
   for sipm in sipms:
-    errors = 0
 
     # A histogram with 5 peaks corresponds to 10 distances
     # (4 singles, 3 doubles, 2 tripples and 1 quadruple)
@@ -211,6 +211,7 @@ def get_gains(distances, sipms=range(32)):
     if sipm in distances:
       if len(distances[sipm]) < 100:
         errors += 1
+        continue
 
       # Build a histogram using the distances
       ydata, edges = np.histogram(
@@ -238,6 +239,6 @@ def get_gains(distances, sipms=range(32)):
       except RuntimeError as e:
         errors += 1
 
-    print('  SiPM %d: %d errors' % (sipm, errors))
+    print('  Computed %d gains got %d errors' % (len(gains), errors))
 
   return gains
