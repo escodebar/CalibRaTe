@@ -18,8 +18,6 @@
 using namespace boost::program_options;
 using json = nlohmann::json;
 
-// TODO: Document this program
-
 int main (int ac, char* av[])
 {
 	std::cout << "Fitter started" << std::endl;
@@ -67,6 +65,8 @@ int main (int ac, char* av[])
 
 		auto key = parsed["key"];
 		auto spectrum = parsed["spectrum"];
+		
+		std::cout << key << std::endl;
 
 		// Create and fill the histogram with the values of the request
 		TH1I * hist = new TH1I("", "", 4096, 0, 4095);
@@ -148,7 +148,12 @@ int main (int ac, char* av[])
 							double chi2 = fit->GetChisquare();
 							double ndf = fit->GetNDF();
 
-							if (sig_pos / f_pos < 0.1 && f_pos > x_min && f_pos < x_max) {
+							if (
+								pow(sig_pos / f_pos, 2) < pow(0.05, 2) &&
+								pow(sig_sig / f_sig, 2) < pow(0.05, 2) && 
+								f_pos > x_min && 
+								f_pos < x_max
+							) {
 								j["fits"].push_back({f_pos, sig_pos});
 								++good_peaks;
 							}
@@ -221,6 +226,7 @@ int main (int ac, char* av[])
 
 		// Send results if found any
 		s_send (sink, result.dump());
+		std::cout << "SENT RESULT" << std::endl;
 	}
 
 	return 0;
