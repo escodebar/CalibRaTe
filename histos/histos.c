@@ -1,5 +1,6 @@
 #include "histos.h"
 
+
 // Program documentation
 const char *argp_program_version     = "histos 1.0";
 const char *argp_program_bug_address = "<pablo.verges@lhep.unibe.ch>";
@@ -355,6 +356,7 @@ int main (int argc, char **argv) {
 		}
 	}
 
+	// START
 	// create the zmq context and their sockets
 	void *context  = zmq_ctx_new ();
 	void *driver   = zmq_socket (context, ZMQ_REQ);
@@ -496,8 +498,7 @@ int main (int argc, char **argv) {
 
 						--nr_events_left;
 
-						// TODO: Lines 515 to 524 and 528 to 539 are pretty much the same
-						// Combine them!
+						// TODO: FEATURE: process events differently here to use histos as an event filter
 
 						if (arguments.all == 1 || arguments.as_is == 1) {
 							int max = 0;
