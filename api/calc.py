@@ -239,6 +239,6 @@ def get_gains(distances, sipms=range(32)):
       except RuntimeError as e:
         errors += 1
 
-    print('  Computed %d gains got %d errors' % (len(gains), errors))
+  print('  Computed %d gains got %d errors' % (len(gains), errors))
 
   return gains
