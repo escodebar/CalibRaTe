@@ -12,7 +12,7 @@ def calibrate(
   gain=75,
   bias_range=[],
   bias_settings=[180, 185, 190, 195, 200],
-  conf='CONF/CITIROC_SC_PROFILE1.txt',
+  conf='CONF/SC.txt',
   driver='tcp://localhost:5555',
   data='tcp://localhost:5556',
   task_output='tcp://localhost:7000',
