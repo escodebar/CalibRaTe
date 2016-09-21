@@ -226,8 +226,8 @@ if __name__ == '__main__':
     help='Socket to stats               Ex. tcp://localhost:5557'
   )
   parser.add_argument(
-    '--conf', nargs='?', type=str, default='CONF/CITIROC_SC_PROFILE1.txt',
-    help='Path to template config file  Ex. CONF/CITIROC_SC_PROFILE1.txt'
+    '--conf', nargs='?', type=str, default='CONF/SC.txt',
+    help='Path to template config file  Ex. CONF/SC.txt'
   )
   parser.add_argument(
     '--path', nargs='?', type=str, default='data',
