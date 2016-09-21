@@ -15,93 +15,7 @@ import zmq
 def _gauss(x, A, μ, σ):
   return A * np.exp(- (x-μ)**2 / (2.0 * σ**2))
 
-
-## api functions
-
-def aggregate(template='*.histos', events=np.inf, visuals=False, channel=0):
-
-  filenames = sorted(glob.glob(template))
-
-  pedestals = {}
-  spectra   = {}
-
-  total = 0
-
-  # stores the precedent configuration
-  c = ''
-
-  for filename in filenames:
-
-    # you know your code is bad, when a 'break' becomes an elegant solution
-    if total > events:
-      break
-
-    file = open(filename, 'rb')
-    mac5, config, pp, ss = pickle.load(file)
-    #if c != '' and c != config:
-    #  raise ValueError("Prevented aggregation with different configurations")
-    file.close()
-    c = config
-
-    # discount events added
-    total += np.sum(ss[0])
-
-    if mac5 not in pedestals:
-      pedestals[mac5] = np.zeros((32, 4096))
-      spectra[mac5] = np.zeros((32, 4096))
-
-    for chnr, p_h, s_h in zip(range(len(pp)), pp, ss):
-      pedestals[mac5][chnr] += np.array(p_h)
-      spectra[mac5][chnr] += np.array(s_h)
-
-  if visuals:
-
-    for mac5 in pedestals:
-
-      # define the layout of the plot
-      layout = go.Layout(
-        title='Histograms FEB %d' % mac5,
-        xaxis={'title':'ADC Counts / Bin Nr'},
-        yaxis={'title':'Nr Events'}
-      )
-
-      # generate a range to enumerate the bins
-      xdata = np.arange(0, 4096)
-
-      # plot
-      iplot(go.Figure(
-        data=[
-          go.Bar(x=xdata, y=pedestals[mac5][channel], name='Pedestal'),
-          go.Bar(x=xdata, y=spectra[mac5][channel],   name='Spectrum'),
-        ],
-        layout=go.Layout(
-          title='Histograms FEB %d Channel %d' % (mac5, channel),
-          xaxis={'title': 'ADC Counts / Bin Nr'},
-          yaxis={
-            'title'     : 'Nr Events',
-            'type'      : 'log',
-            'autorange' : True
-          }
-        )
-      ))
-
-  return pedestals, spectra
-
-
-def get_histograms(template='*.histos'):
-  filenames = sorted(glob.glob(template))
-  histograms = {}
-  for filename in filenames:
-    file = open(filename, 'rb')
-    mac5, config, pp, ss = pickle.load(file)
-    file.close()
-    if mac5 not in histograms:
-      histograms[mac5] = []
-    histograms[mac5].append((config, pp, ss))
-  return histograms
-
-
-def fit_gaussian(histogram, A=0, μ=0, σ=0, visuals=False):
+def _fit_gaussian(histogram, A=0, μ=0, σ=0, visuals=False):
   # histogram is a dict of {binnr: value}
 
   try:
@@ -145,7 +59,7 @@ def fit_gaussian(histogram, A=0, μ=0, σ=0, visuals=False):
     raise
 
 
-def rebin(histogram, bin_size=1, visuals=False):
+def _rebin(histogram, bin_size=1, visuals=False):
   # split histogram into values and bins
   values = list(histogram.values())
   bins = list(histogram)
@@ -157,27 +71,22 @@ def rebin(histogram, bin_size=1, visuals=False):
   # generate histogram
   rebinned = dict(zip(xdata, ydata))
 
-  if visuals:
-    layout = go.Layout(
-      title='Bining data',
-      xaxis={'title':'ADC Counts / Bin Nr'},
-      yaxis={'title':'Nr Events'}
-    )
-
-    iplot(go.Figure(
-      data=[go.Bar(
-        x=bins,
-        y=values,
-        name='data'
-      ), go.Bar(
-        x=xdata,
-        y=ydata,
-        name='bin size %d' % bin_size
-      )],
-      layout=layout
-    ))
-
   return rebinned
+
+
+## api functions
+
+def get_histograms(template='*.histos'):
+  filenames = sorted(glob.glob(template))
+  histograms = {}
+  for filename in filenames:
+    file = open(filename, 'rb')
+    mac5, config, pp, ss = pickle.load(file)
+    file.close()
+    if mac5 not in histograms:
+      histograms[mac5] = []
+    histograms[mac5].append((config, pp, ss))
+  return histograms
 
 
 def get_peaks_and_distances(
@@ -205,9 +114,7 @@ def get_peaks_and_distances(
 
   # compute the gain for every channel
   for sipm in sipms:
-
-    print('  SiPM %d' % sipm)
-
+    
     sent = 0
     received = 0
 
@@ -244,6 +151,7 @@ def get_peaks_and_distances(
 
     # get the distances between the peaks
     # from the fitter's result / response
+    errors = 0
     for i in range(sent):
 
       answer = puller.recv_string()
@@ -252,7 +160,7 @@ def get_peaks_and_distances(
       # the error should be given
       # by an error key in the response
       if answer == 'ERR':
-        print('    Fitter failed: ', answer)
+        errors += 1
         continue
 
       # the response of the fitter is a json
@@ -264,7 +172,7 @@ def get_peaks_and_distances(
       _s = key['sipm']
 
       if 'distances' not in answer:
-        print('    Distances not in answer: ', answer)
+        errors += 1
         continue
 
       if _s not in distances:
@@ -276,12 +184,11 @@ def get_peaks_and_distances(
       distances[_s] += answer['distances']
       peaks[_s] += answer['peaks']
       received += 1
-
-    print("    Sent / Received: %d/%d" % (sent, received))
+    
+    print('  SiPM %02d - Sent / Received / Errors: %d / %d / %d' % (sipm, sent, received, errors))
 
   # TODO: close the context or use the decorator given by pyzmq
-
-
+  
   return peaks, distances
 
 
@@ -291,10 +198,10 @@ def get_gains(distances, sipms=range(32)):
 
   # Stores the gains
   gains = {}
+  errors = 0
 
   # Compute the gains
   for sipm in sipms:
-    print('  SiPM %d' % sipm)
 
     # A histogram with 5 peaks corresponds to 10 distances
     # (4 singles, 3 doubles, 2 tripples and 1 quadruple)
@@ -303,7 +210,8 @@ def get_gains(distances, sipms=range(32)):
     # distances are collected.
     if sipm in distances:
       if len(distances[sipm]) < 100:
-        print('    Less than 100 distances!!')
+        errors += 1
+        continue
 
       # Build a histogram using the distances
       ydata, edges = np.histogram(
@@ -317,7 +225,7 @@ def get_gains(distances, sipms=range(32)):
 
       res = []
       try:
-        (A, mu, sigma), pcov = fit_gaussian(
+        (A, mu, sigma), pcov = _fit_gaussian(
           dict(zip(xdata, ydata)),
           max(ydata),
           xdata[pos],
@@ -329,7 +237,8 @@ def get_gains(distances, sipms=range(32)):
           gains[sipm] = (A, mu, sigma), pcov
 
       except RuntimeError as e:
-        print('    ', e)
+        errors += 1
+
+  print('  Computed %d gains got %d errors' % (len(gains), errors))
 
   return gains
-
