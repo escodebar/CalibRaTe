@@ -22,19 +22,19 @@ def calibrate(
 ):
 
   # load the configuration file
-  #daq.load_config_file(path=conf, febs=crts)
+  daq.load_config_file(path=conf, febs=crts)
 
   # acquire data for each bias voltage
-  #for bias in bias_settings:
-  #  print("Acquiring data for bias %d" % bias)
-  #  os.makedirs('%s/bias_%d' % (path, bias), exist_ok=True)
-  #  daq.set_voltages(bias, crts)
-  #  daq.acquire(
-  #    crts,
-  #    path='%s/bias_%d' % (path, bias),
-  #    driver=driver,
-  #    data=data
-  #  )
+  for bias in bias_settings:
+    print("Acquiring data for bias %d" % bias)
+    os.makedirs('%s/bias_%d' % (path, bias), exist_ok=True)
+    daq.set_voltages(bias, crts)
+    daq.acquire(
+      crts,
+      path='%s/bias_%d' % (path, bias),
+      driver=driver,
+      data=data
+    )
 
   # compute the gains for each bias voltage
   gains = {}
